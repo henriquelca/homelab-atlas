@@ -84,16 +84,16 @@ start() {
 
 # ─── Template management ──────────────────────────────────────────────────────
 get_template() {
+  # Sets global TEMPLATE variable — avoids stdout pollution from msg_* calls
   local storage="${var_template_storage:-local}"
   local os="$var_os"
   local version="$var_version"
 
   msg_info "Looking for ${os} ${version} template"
-  local tmpl
-  tmpl=$(pveam list "$storage" 2>/dev/null \
+  TEMPLATE=$(pveam list "$storage" 2>/dev/null \
     | grep "${os}-${version}" | tail -n1 | awk '{print $1}' || true)
 
-  if [[ -z "$tmpl" ]]; then
+  if [[ -z "$TEMPLATE" ]]; then
     msg_info "Template not found — downloading"
     pveam update >/dev/null 2>&1
     local tmpl_name
@@ -103,12 +103,11 @@ get_template() {
       msg_error "Could not find a ${os} ${version} template."
     fi
     pveam download "$storage" "$tmpl_name" >/dev/null 2>&1
-    tmpl="${storage}:vztmpl/${tmpl_name}"
+    TEMPLATE="${storage}:vztmpl/${tmpl_name}"
     msg_ok "Downloaded template: ${tmpl_name}"
   else
-    msg_ok "Found template: ${tmpl}"
+    msg_ok "Found template: ${TEMPLATE}"
   fi
-  echo "$tmpl"
 }
 
 # ─── Container creation ───────────────────────────────────────────────────────
@@ -123,13 +122,12 @@ build_container() {
     msg_error "This script must be run on a Proxmox VE host."
   fi
 
-  local template
-  template=$(get_template)
+  get_template
   local ctid="${CT_ID:-$NEXTID}"
   local storage="${var_container_storage:-local-lvm}"
 
   msg_info "Creating LXC container ${ctid}"
-  pct create "$ctid" "$template" \
+  pct create "$ctid" "$TEMPLATE" \
     --hostname  "${var_hostname:-$NSAPP}" \
     --cores     "$var_cpu" \
     --memory    "$var_ram" \

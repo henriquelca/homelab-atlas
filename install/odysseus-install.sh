@@ -18,7 +18,10 @@ apt-get install -y -qq \
 msg_ok "Installed system dependencies"
 
 msg_info "Cloning Odysseus repository"
-rm -rf /opt/odysseus
+if [[ -d /opt/odysseus ]]; then
+  msg_error "Odysseus already appears to be installed."
+  exit 1
+fi
 git clone -q https://github.com/pewdiepie-archdaemon/odysseus /opt/odysseus
 msg_ok "Cloned Odysseus repository"
 
