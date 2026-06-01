@@ -1,0 +1,24 @@
+{
+  "name": "Odysseus",
+  "slug": "odysseus",
+  "categories": ["ai", "workspace"],
+  "date_created": "2026-06-01",
+  "type": "ct",
+  "description": "Odysseus is an AI-powered workspace.",
+  "install_methods": [
+    {
+      "type": "default",
+      "script": "ct/odysseus.sh",
+      "resources": {
+        "cpu": 4,
+        "ram": 4096,
+        "hdd": 20,
+        "os": "debian",
+        "version": "13"
+      }
+    }
+  ],
+  "interface_port": 7000,
+  "website": "https://github.com/pewdiepie-archdaemon/odysseus",
+  "logo": "https://raw.githubusercontent.com/henriquelca/homelab-atlas/main/json/logo/odysseus.png"
+}

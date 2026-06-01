@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-source <(curl -fsSL https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/misc/build.func)
-# Copyright (c) 2021-2026 community-scripts ORG
+source <(curl -fsSL https://raw.githubusercontent.com/henriquelca/homelab-atlas/main/misc/build.func)
+# Copyright (c) 2026 henriquelca
 # Author: henriquelca
-# License: MIT | https://github.com/community-scripts/ProxmoxVE/raw/main/LICENSE
+# License: MIT
 # Source: https://github.com/pewdiepie-archdaemon/odysseus
 
 APP="Odysseus"
@@ -21,9 +21,6 @@ catch_errors
 
 function update_script() {
   header_info
-  check_container_storage
-  check_container_resources
-
   if [[ ! -d /opt/odysseus ]]; then
     msg_error "No ${APP} Installation Found!"
     exit
@@ -34,29 +31,28 @@ function update_script() {
   LATEST=$(git ls-remote https://github.com/pewdiepie-archdaemon/odysseus HEAD | cut -f1)
 
   if [[ "$CURRENT" == "$LATEST" ]]; then
-    msg_ok "No update available — already on latest commit."
+    msg_ok "Already on latest version — nothing to do."
     exit 0
   fi
   msg_ok "Update available — proceeding"
 
-  msg_info "Stopping Odysseus Service"
+  msg_info "Stopping service"
   systemctl stop odysseus
-  msg_ok "Stopped Service"
+  msg_ok "Stopped"
 
   msg_info "Pulling latest changes"
-  cd /opt/odysseus
-  $STD git pull origin main
-  msg_ok "Pulled latest changes"
+  git -C /opt/odysseus pull origin main -q
+  msg_ok "Pulled"
 
-  msg_info "Updating Python dependencies"
+  msg_info "Updating dependencies"
   source /opt/odysseus/venv/bin/activate
-  $STD pip install --upgrade -r /opt/odysseus/requirements.txt
+  pip install --upgrade -r /opt/odysseus/requirements.txt -q
   deactivate
-  msg_ok "Updated Python dependencies"
+  msg_ok "Dependencies updated"
 
-  msg_info "Starting Odysseus Service"
+  msg_info "Starting service"
   systemctl start odysseus
-  msg_ok "Started Service"
+  msg_ok "Started"
 
   msg_ok "Updated successfully!"
   exit
@@ -67,13 +63,7 @@ build_container
 description
 
 msg_ok "Completed successfully!\n"
-echo -e "${CREATING}${GN}${APP} setup has been successfully initialized!${CL}"
-
-if [[ -f /root/.odysseus_admin_pass ]]; then
-  PASS=$(cat /root/.odysseus_admin_pass)
-  echo -e "${INFO}${YW} Admin password:${CL} ${BGN}${PASS}${CL}"
-  echo -e "${INFO}${YW} (Saved to /root/.odysseus_admin_pass — delete after noting it)${CL}"
-fi
-
-echo -e "${INFO}${YW} Access it using the following URL:${CL}"
-echo -e "${TAB}${GATEWAY}${BGN}http://${IP}:7000${CL}"
+echo -e "${TAB}${BOLD}Access ${APP} at:${CL}"
+IP=$(pvesh get /nodes/$(hostname)/lxc --output-format json 2>/dev/null \
+  | grep -oP '"ip":\s*"\K[^"]+' | head -n1 || echo "your-container-ip")
+echo -e "${TAB}${GN}http://${IP}:7000${CL}\n"

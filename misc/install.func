@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+# Copyright (c) 2026 henriquelca
+# Author: henriquelca
+# License: MIT
+# Inspired by: https://github.com/community-scripts/ProxmoxVE
+
+# ==============================================================================
+# homelab-atlas/misc/install.func
+# Sourced by install scripts running inside the container.
+# ==============================================================================
+
+REPO_RAW="https://raw.githubusercontent.com/henriquelca/homelab-atlas/main"
+
+# ─── Colors ───────────────────────────────────────────────────────────────────
+YW="\e[33m"; GN="\e[32m"; RD="\e[31m"; BL="\e[36m"; CL="\e[0m"; BOLD="\e[1m"
+TAB="  "
+
+msg_info()  { echo -e "${TAB}${BL}[INFO]${CL}  $1"; }
+msg_ok()    { echo -e "${TAB}${GN}[OK]${CL}    $1"; }
+msg_error() { echo -e "${TAB}${RD}[ERROR]${CL} $1"; exit 1; }
+msg_warn()  { echo -e "${TAB}${YW}[WARN]${CL}  $1"; }
+
+catch_errors() { set -Eeuo pipefail; trap 'echo -e "${RD}Error on line $LINENO${CL}"; exit 1' ERR; }
+
+# ─── Network check ────────────────────────────────────────────────────────────
+setting_up_container() {
+  msg_info "Checking network"
+  for ((i = 10; i > 0; i--)); do
+    [[ "$(hostname -I)" != "" ]] && break
+    sleep 1
+  done
+  if [[ "$(hostname -I)" == "" ]]; then
+    msg_error "No network after 10 tries — check container network settings."
+  fi
+  rm -rf /usr/lib/python3.*/EXTERNALLY-MANAGED
+  systemctl disable -q --now systemd-networkd-wait-online.service 2>/dev/null || true
+  msg_ok "Network connected: $(hostname -I | awk '{print $1}')"
+}
+
+# ─── OS update ────────────────────────────────────────────────────────────────
+update_os() {
+  msg_info "Updating container OS"
+  apt-get update -qq
+  apt-get -y -qq dist-upgrade
+  rm -rf /usr/lib/python3.*/EXTERNALLY-MANAGED
+  msg_ok "Updated container OS"
+}
+
+# ─── MOTD & SSH ───────────────────────────────────────────────────────────────
+motd_ssh() {
+  local PROFILE_FILE="/etc/profile.d/00_lxc-details.sh"
+  cat > "$PROFILE_FILE" << EOF
+#!/usr/bin/env bash
+echo ""
+echo -e "\e[1m  ${app:-App} LXC — homelab-atlas\e[0m"
+echo -e "  \e[33mOS:\e[0m      \e[32m\$(grep ^NAME /etc/os-release | cut -d= -f2 | tr -d '"') \$(grep ^VERSION_ID /etc/os-release | cut -d= -f2 | tr -d '"')\e[0m"
+echo -e "  \e[33mHostname:\e[0m \e[32m\$(hostname)\e[0m"
+echo -e "  \e[33mIP:\e[0m      \e[32m\$(hostname -I | awk '{print \$1}')\e[0m"
+echo ""
+EOF
+  chmod -x /etc/update-motd.d/* 2>/dev/null || true
+}
+
+# ─── Customize (autologin + update command) ───────────────────────────────────
+# Mirrors community-scripts customize() exactly — just points to your repo.
+customize() {
+  # Autologin if no password set
+  if [[ "${PASSWORD:-}" == "" ]]; then
+    msg_info "Setting up autologin"
+    local GETTY_OVERRIDE="/etc/systemd/system/container-getty@1.service.d/override.conf"
+    mkdir -p "$(dirname "$GETTY_OVERRIDE")"
+    cat > "$GETTY_OVERRIDE" << EOF
+[Service]
+ExecStart=
+ExecStart=-/sbin/agetty --autologin root --noclear --keep-baud tty%I 115200,38400,9600 \$TERM
+EOF
+    systemctl daemon-reload
+    msg_ok "Autologin configured"
+  fi
+
+  # Update command — re-runs the ct script exactly like community-scripts does
+  echo "bash -c \"\$(curl -fsSL ${REPO_RAW}/ct/${app}.sh)\"" > /usr/bin/update
+  chmod +x /usr/bin/update
+  msg_ok "Update command created — type 'update' to update ${app}"
+}

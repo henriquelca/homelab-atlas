@@ -1,35 +1,33 @@
 #!/usr/bin/env bash
-source /dev/stdin <<< "$(curl -fsSL https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/misc/install.func)"
-# Copyright (c) 2021-2026 community-scripts ORG
+source <(curl -fsSL https://raw.githubusercontent.com/henriquelca/homelab-atlas/main/misc/install.func)
+# Copyright (c) 2026 henriquelca
 # Author: henriquelca
-# License: MIT | https://github.com/community-scripts/ProxmoxVE/raw/main/LICENSE
+# License: MIT
 # Source: https://github.com/pewdiepie-archdaemon/odysseus
 
+app="odysseus"
+catch_errors
+setting_up_container
+update_os
+
 msg_info "Installing system dependencies"
-$STD apt-get update
-$STD apt-get install -y \
-  git \
-  curl \
-  tmux \
-  python3 \
-  python3-pip \
-  python3-venv \
-  build-essential \
-  libssl-dev \
-  libffi-dev
+apt-get install -y -qq \
+  git curl tmux \
+  python3 python3-pip python3-venv \
+  build-essential libssl-dev libffi-dev
 msg_ok "Installed system dependencies"
 
 msg_info "Cloning Odysseus repository"
 rm -rf /opt/odysseus
-$STD git clone https://github.com/pewdiepie-archdaemon/odysseus /opt/odysseus
+git clone -q https://github.com/pewdiepie-archdaemon/odysseus /opt/odysseus
 msg_ok "Cloned Odysseus repository"
 
 msg_info "Setting up Python virtual environment"
 python3 -m venv /opt/odysseus/venv
 source /opt/odysseus/venv/bin/activate
-$STD pip install --upgrade pip
-$STD pip install uvicorn
-$STD pip install -r /opt/odysseus/requirements.txt
+pip install --upgrade pip -q
+pip install uvicorn -q
+pip install -r /opt/odysseus/requirements.txt -q
 deactivate
 msg_ok "Set up Python virtual environment"
 
@@ -65,12 +63,16 @@ User=root
 [Install]
 WantedBy=multi-user.target
 EOF
-
-$STD systemctl daemon-reload
+systemctl daemon-reload
 systemctl enable -q --now odysseus
 msg_ok "Created and started systemd service"
 
-if [[ -n "$ADMIN_PASS" ]]; then
+if [[ -n "${ADMIN_PASS:-}" ]]; then
   echo "$ADMIN_PASS" >/root/.odysseus_admin_pass
   chmod 600 /root/.odysseus_admin_pass
 fi
+
+motd_ssh
+customize
+
+msg_ok "Odysseus installation complete"

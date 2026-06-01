@@ -1,0 +1,185 @@
+#!/usr/bin/env bash
+# Copyright (c) 2026 henriquelca
+# Author: henriquelca
+# License: MIT
+# Inspired by: https://github.com/community-scripts/ProxmoxVE
+
+# ==============================================================================
+# homelab-atlas/misc/build.func
+# Lightweight build helper — mirrors community-scripts structure.
+# Swap these URLs to community-scripts before submitting a PR.
+# ==============================================================================
+
+REPO_RAW="https://raw.githubusercontent.com/henriquelca/homelab-atlas/main"
+REPO_URL="https://github.com/henriquelca/homelab-atlas"
+
+# ─── Colors & formatting ──────────────────────────────────────────────────────
+YW="\e[33m"
+GN="\e[32m"
+RD="\e[31m"
+BL="\e[36m"
+CL="\e[0m"
+BOLD="\e[1m"
+DIM="\e[2m"
+TAB="  "
+CM="${GN}✔${CL}"
+CROSS="${RD}✘${CL}"
+INFO="ℹ️ "
+
+# ─── Messaging ────────────────────────────────────────────────────────────────
+msg_info()  { echo -e "${TAB}${BL}[INFO]${CL}  $1"; }
+msg_ok()    { echo -e "${TAB}${GN}[OK]${CL}    $1"; }
+msg_error() { echo -e "${TAB}${RD}[ERROR]${CL} $1"; exit 1; }
+msg_warn()  { echo -e "${TAB}${YW}[WARN]${CL}  $1"; }
+
+# ─── Header ───────────────────────────────────────────────────────────────────
+header_info() {
+  clear
+  echo -e "${BOLD}${BL}"
+  echo -e "  homelab-atlas — ${APP}${CL}"
+  echo -e "${TAB}$(printf '─%.0s' {1..45})\n"
+}
+
+# ─── Variables ────────────────────────────────────────────────────────────────
+# Called after APP and var_* are set in the ct script.
+# Mirrors community-scripts variables() behaviour.
+variables() {
+  NSAPP=$(echo "${APP,,}" | tr -d ' ')
+  var_install="${NSAPP}-install"
+  NEXTID=$(pvesh get /cluster/nextid 2>/dev/null || echo 100)
+}
+
+color()        { :; } # no-op — colors already loaded above
+catch_errors() { set -Eeuo pipefail; trap 'echo -e "${RD}Error on line $LINENO${CL}"; exit 1' ERR; }
+
+# ─── Echo default settings ────────────────────────────────────────────────────
+echo_default() {
+  echo -e "${TAB}${BOLD}Settings:${CL}"
+  echo -e "${TAB}  CT ID:      ${YW}${CT_ID:-$NEXTID}${CL}"
+  echo -e "${TAB}  Hostname:   ${YW}${var_hostname:-$NSAPP}${CL}"
+  echo -e "${TAB}  Cores:      ${YW}${var_cpu}${CL}"
+  echo -e "${TAB}  RAM:        ${YW}${var_ram} MB${CL}"
+  echo -e "${TAB}  Disk:       ${YW}${var_disk} GB${CL}"
+  echo -e "${TAB}  OS:         ${YW}${var_os} ${var_version}${CL}"
+  echo -e "${TAB}  Unprivileged: ${YW}${var_unprivileged}${CL}\n"
+}
+
+# ─── Start ────────────────────────────────────────────────────────────────────
+# Mirrors community-scripts behaviour:
+# - Inside a container (no pveversion): call update_script() and exit
+# - On Proxmox host: proceed with container creation
+start() {
+  if ! command -v pveversion &>/dev/null; then
+    if declare -f update_script &>/dev/null; then
+      update_script
+    else
+      msg_error "update_script() not defined in ct script."
+    fi
+    exit 0
+  fi
+  echo -e "\n${TAB}${BOLD}${BL}homelab-atlas${CL} — ${BOLD}${APP}${CL}"
+  echo -e "${TAB}$(printf '─%.0s' {1..45})"
+  echo_default
+}
+
+# ─── Template management ──────────────────────────────────────────────────────
+get_template() {
+  local storage="${var_template_storage:-local}"
+  local os="$var_os"
+  local version="$var_version"
+
+  msg_info "Looking for ${os} ${version} template"
+  local tmpl
+  tmpl=$(pveam list "$storage" 2>/dev/null \
+    | grep "${os}-${version}" | tail -n1 | awk '{print $1}' || true)
+
+  if [[ -z "$tmpl" ]]; then
+    msg_info "Template not found — downloading"
+    pveam update >/dev/null 2>&1
+    local tmpl_name
+    tmpl_name=$(pveam available --section system \
+      | grep "${os}-${version}" | tail -n1 | awk '{print $2}')
+    if [[ -z "$tmpl_name" ]]; then
+      msg_error "Could not find a ${os} ${version} template."
+    fi
+    pveam download "$storage" "$tmpl_name" >/dev/null 2>&1
+    tmpl="${storage}:vztmpl/${tmpl_name}"
+    msg_ok "Downloaded template: ${tmpl_name}"
+  else
+    msg_ok "Found template: ${tmpl}"
+  fi
+  echo "$tmpl"
+}
+
+# ─── Container creation ───────────────────────────────────────────────────────
+build_container() {
+  # Check for existing CT
+  if pct status "${CT_ID:-$NEXTID}" &>/dev/null; then
+    msg_error "Container ID ${CT_ID:-$NEXTID} already exists."
+  fi
+
+  # Check running on Proxmox
+  if ! command -v pct &>/dev/null; then
+    msg_error "This script must be run on a Proxmox VE host."
+  fi
+
+  local template
+  template=$(get_template)
+  local ctid="${CT_ID:-$NEXTID}"
+  local storage="${var_container_storage:-local-lvm}"
+
+  msg_info "Creating LXC container ${ctid}"
+  pct create "$ctid" "$template" \
+    --hostname  "${var_hostname:-$NSAPP}" \
+    --cores     "$var_cpu" \
+    --memory    "$var_ram" \
+    --rootfs    "${storage}:${var_disk}" \
+    --net0      "name=eth0,bridge=${var_brg:-vmbr0},ip=${var_net:-dhcp}" \
+    --ostype    "$var_os" \
+    --unprivileged "${var_unprivileged:-1}" \
+    --features  "nesting=1" \
+    --onboot    1 \
+    >/dev/null 2>&1
+  msg_ok "Created container ${ctid}"
+
+  msg_info "Starting container"
+  pct start "$ctid"
+  sleep 5
+  msg_ok "Container started"
+
+  msg_info "Running install script"
+  pct exec "$ctid" -- bash -c \
+    "$(curl -fsSL "${REPO_RAW}/install/${var_install}.sh")"
+  msg_ok "Install script completed"
+}
+
+# ─── Description (notes panel) ────────────────────────────────────────────────
+# Reads json/odysseus.json from your repo and sets the container description.
+description() {
+  local ctid="${CT_ID:-$NEXTID}"
+  local json_url="${REPO_RAW}/json/${NSAPP}.json"
+
+  msg_info "Setting container description"
+  local json
+  json=$(curl -fsSL "$json_url" 2>/dev/null || true)
+
+  if [[ -z "$json" ]]; then
+    msg_warn "No JSON found at ${json_url} — skipping description"
+    return 0
+  fi
+
+  # Parse fields from JSON (no jq dependency)
+  local desc port website
+  desc=$(echo "$json" | grep -oP '(?<="description":\s*")[^"]+' || true)
+  port=$(echo "$json" | grep -oP '(?<="interface_port":\s*)\d+' || true)
+  website=$(echo "$json" | grep -oP '(?<="website":\s*")[^"]+' || true)
+
+  local notes="### ${APP}\n"
+  [[ -n "$desc" ]]    && notes+="${desc}\n\n"
+  [[ -n "$port" ]]    && notes+="**Port:** ${port}\n"
+  [[ -n "$website" ]] && notes+="**Source:** ${website}\n"
+  notes+="\n*Installed by [homelab-atlas](${REPO_URL})*"
+
+  pct set "$ctid" --description "$(printf "%b" "$notes")" >/dev/null 2>&1
+  msg_ok "Set container description"
+}
