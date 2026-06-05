@@ -31,6 +31,7 @@ msg_info()  { echo -e "${TAB}${BL}[INFO]${CL}  $1"; }
 msg_ok()    { echo -e "${TAB}${GN}[OK]${CL}    $1"; }
 msg_error() { echo -e "${TAB}${RD}[ERROR]${CL} $1"; exit 1; }
 msg_warn()  { echo -e "${TAB}${YW}[WARN]${CL}  $1"; }
+msg_debug() { echo -e "${TAB}${DIM}[DEBUG]${CL} $1"; }
 
 # ─── Header ───────────────────────────────────────────────────────────────────
 header_info() {
@@ -41,35 +42,37 @@ header_info() {
 }
 
 # ─── Variables ────────────────────────────────────────────────────────────────
-# Called after APP and var_* are set in the ct script.
-# Mirrors community-scripts variables() behaviour.
 variables() {
   NSAPP=$(echo "${APP,,}" | tr -d ' ')
   var_install="${NSAPP}-install"
   NEXTID=$(pvesh get /cluster/nextid 2>/dev/null || echo 100)
+  msg_debug "APP=${APP} NSAPP=${NSAPP} var_install=${var_install} NEXTID=${NEXTID}"
 }
 
-color()        { :; } # no-op — colors already loaded above
-catch_errors() { set -Eeuo pipefail; trap 'echo -e "${RD}Error on line $LINENO${CL}"; exit 1' ERR; }
+color()        { :; }
+catch_errors() {
+  set -Eeuo pipefail
+  trap 'msg_error "Unexpected error on line $LINENO — check output above"' ERR
+}
 
 # ─── Echo default settings ────────────────────────────────────────────────────
 echo_default() {
   echo -e "${TAB}${BOLD}Settings:${CL}"
-  echo -e "${TAB}  CT ID:      ${YW}${CT_ID:-$NEXTID}${CL}"
-  echo -e "${TAB}  Hostname:   ${YW}${var_hostname:-$NSAPP}${CL}"
-  echo -e "${TAB}  Cores:      ${YW}${var_cpu}${CL}"
-  echo -e "${TAB}  RAM:        ${YW}${var_ram} MB${CL}"
-  echo -e "${TAB}  Disk:       ${YW}${var_disk} GB${CL}"
-  echo -e "${TAB}  OS:         ${YW}${var_os} ${var_version}${CL}"
+  echo -e "${TAB}  CT ID:        ${YW}${CT_ID:-$NEXTID}${CL}"
+  echo -e "${TAB}  Hostname:     ${YW}${var_hostname:-$NSAPP}${CL}"
+  echo -e "${TAB}  Cores:        ${YW}${var_cpu}${CL}"
+  echo -e "${TAB}  RAM:          ${YW}${var_ram} MB${CL}"
+  echo -e "${TAB}  Disk:         ${YW}${var_disk} GB${CL}"
+  echo -e "${TAB}  OS:           ${YW}${var_os} ${var_version}${CL}"
   echo -e "${TAB}  Unprivileged: ${YW}${var_unprivileged}${CL}\n"
 }
 
 # ─── Start ────────────────────────────────────────────────────────────────────
-# Mirrors community-scripts behaviour:
 # - Inside a container (no pveversion): call update_script() and exit
 # - On Proxmox host: proceed with container creation
 start() {
   if ! command -v pveversion &>/dev/null; then
+    msg_debug "pveversion not found — running inside container, calling update_script()"
     if declare -f update_script &>/dev/null; then
       update_script
     else
@@ -77,87 +80,103 @@ start() {
     fi
     exit 0
   fi
+  msg_debug "pveversion found — running on Proxmox host, proceeding with install"
   echo -e "\n${TAB}${BOLD}${BL}homelab-atlas${CL} — ${BOLD}${APP}${CL}"
   echo -e "${TAB}$(printf '─%.0s' {1..45})"
   echo_default
 }
 
 # ─── Template management ──────────────────────────────────────────────────────
+# Uses global TEMPLATE variable to avoid stdout pollution from msg_* calls
 get_template() {
-  # Sets global TEMPLATE variable — avoids stdout pollution from msg_* calls
   local storage="${var_template_storage:-local}"
   local os="$var_os"
   local version="$var_version"
 
+  msg_debug "Looking for template: storage=${storage} os=${os} version=${version}"
   msg_info "Looking for ${os} ${version} template"
+
   TEMPLATE=$(pveam list "$storage" 2>/dev/null \
     | grep "${os}-${version}" | tail -n1 | awk '{print $1}' || true)
+  msg_debug "pveam list result: '${TEMPLATE}'"
 
   if [[ -z "$TEMPLATE" ]]; then
     msg_info "Template not found — downloading"
+    msg_debug "Running: pveam update"
     pveam update >/dev/null 2>&1
+
     local tmpl_name
     tmpl_name=$(pveam available --section system \
       | grep "${os}-${version}" | tail -n1 | awk '{print $2}')
+    msg_debug "Available template name: '${tmpl_name}'"
+
     if [[ -z "$tmpl_name" ]]; then
-      msg_error "Could not find a ${os} ${version} template."
+      msg_error "Could not find a ${os} ${version} template to download."
     fi
+
+    msg_debug "Downloading: pveam download ${storage} ${tmpl_name}"
     pveam download "$storage" "$tmpl_name" >/dev/null 2>&1
     TEMPLATE="${storage}:vztmpl/${tmpl_name}"
     msg_ok "Downloaded template: ${tmpl_name}"
   else
     msg_ok "Found template: ${TEMPLATE}"
   fi
+
+  msg_debug "TEMPLATE resolved to: '${TEMPLATE}'"
 }
 
 # ─── Container creation ───────────────────────────────────────────────────────
 build_container() {
-  # Check for existing CT
-  if pct status "${CT_ID:-$NEXTID}" &>/dev/null; then
-    msg_error "Container ID ${CT_ID:-$NEXTID} already exists."
-  fi
+  msg_debug "build_container() called"
 
-  # Check running on Proxmox
   if ! command -v pct &>/dev/null; then
     msg_error "This script must be run on a Proxmox VE host."
   fi
 
+  if pct status "${CT_ID:-$NEXTID}" &>/dev/null; then
+    msg_error "Container ID ${CT_ID:-$NEXTID} already exists. Set a different ID with: CT_ID=101 bash odysseus.sh"
+  fi
+
   get_template
+
   local ctid="${CT_ID:-$NEXTID}"
   local storage="${var_container_storage:-local-lvm}"
 
+  msg_debug "Creating CT: id=${ctid} template=${TEMPLATE} storage=${storage} cpu=${var_cpu} ram=${var_ram} disk=${var_disk} bridge=${var_brg:-vmbr0} ip=${var_net:-dhcp}"
   msg_info "Creating LXC container ${ctid}"
   pct create "$ctid" "$TEMPLATE" \
-    --hostname  "${var_hostname:-$NSAPP}" \
-    --cores     "$var_cpu" \
-    --memory    "$var_ram" \
-    --rootfs    "${storage}:${var_disk}" \
-    --net0      "name=eth0,bridge=${var_brg:-vmbr0},ip=${var_net:-dhcp}" \
-    --ostype    "$var_os" \
+    --hostname    "${var_hostname:-$NSAPP}" \
+    --cores       "$var_cpu" \
+    --memory      "$var_ram" \
+    --rootfs      "${storage}:${var_disk}" \
+    --net0        "name=eth0,bridge=${var_brg:-vmbr0},ip=${var_net:-dhcp}" \
+    --ostype      "$var_os" \
     --unprivileged "${var_unprivileged:-1}" \
-    --features  "nesting=1" \
-    --onboot    1 \
-    >/dev/null 2>&1
+    --features    "nesting=1" \
+    --onboot      1
   msg_ok "Created container ${ctid}"
 
   msg_info "Starting container"
+  msg_debug "Running: pct start ${ctid}"
   pct start "$ctid"
   sleep 5
   msg_ok "Container started"
 
+  local install_url="${REPO_RAW}/install/${var_install}.sh"
+  msg_debug "Fetching install script from: ${install_url}"
   msg_info "Running install script"
-  pct exec "$ctid" -- bash -c \
-    "$(curl -fsSL "${REPO_RAW}/install/${var_install}.sh")"
+  pct exec "$ctid" -- bash -c "$(curl -fsSL "$install_url")"
   msg_ok "Install script completed"
 }
 
 # ─── Description (notes panel) ────────────────────────────────────────────────
-# Reads json/odysseus.json from your repo and sets the container description.
 description() {
   local ctid="${CT_ID:-$NEXTID}"
   local json_url="${REPO_RAW}/json/${NSAPP}.json"
 
+  msg_debug "Fetching description JSON from: ${json_url}"
   msg_info "Setting container description"
+
   local json
   json=$(curl -fsSL "$json_url" 2>/dev/null || true)
 
@@ -165,12 +184,13 @@ description() {
     msg_warn "No JSON found at ${json_url} — skipping description"
     return 0
   fi
+  msg_debug "JSON fetched successfully (${#json} bytes)"
 
-  # Parse fields from JSON (no jq dependency)
   local desc port website
-  desc=$(echo "$json" | grep -oP '(?<="description":\s*")[^"]+' || true)
-  port=$(echo "$json" | grep -oP '(?<="interface_port":\s*)\d+' || true)
+  desc=$(echo "$json"    | grep -oP '(?<="description":\s*")[^"]+' || true)
+  port=$(echo "$json"    | grep -oP '(?<="interface_port":\s*)\d+' || true)
   website=$(echo "$json" | grep -oP '(?<="website":\s*")[^"]+' || true)
+  msg_debug "Parsed — desc='${desc}' port='${port}' website='${website}'"
 
   local notes="### ${APP}\n"
   [[ -n "$desc" ]]    && notes+="${desc}\n\n"
