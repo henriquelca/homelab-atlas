@@ -78,7 +78,13 @@ description
 
 msg_ok "Completed successfully!\n"
 echo -e "${TAB}${BOLD}Access ${APP} at:${CL}"
-IP=$(pvesh get /nodes/$(hostname)/lxc --output-format json 2>/dev/null \
-  | grep -oP '"ip":\s*"\K[^"]+' | head -n1 || echo "your-container-ip")
+CTID="${CT_ID:-$NEXTID}"
+IP=$(pct exec "$CTID" -- hostname -I 2>/dev/null | awk '{print $1}' || echo "")
 msg_debug "Resolved IP: ${IP}"
-echo -e "${TAB}${GN}http://${IP}:7000${CL}\n"
+if [[ -n "$IP" ]]; then
+  echo -e "${TAB}${GN}http://${IP}:7000${CL}\n"
+else
+  echo -e "${TAB}${YW}Could not resolve IP. Check container with: pct exec ${CTID} -- hostname -I${CL}\n"
+fi
+
+echo -e "${TAB}${DIM}Register your admin account on first visit.${CL}\n"

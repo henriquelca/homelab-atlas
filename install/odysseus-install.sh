@@ -51,14 +51,11 @@ deactivate
 msg_ok "Set up Python virtual environment"
 
 msg_info "Running initial setup"
-msg_debug "Running: python3 setup.py"
+msg_debug "Running: python3 setup.py (creates dirs and db only — admin registered on first web login)"
 cd /opt/odysseus
 source /opt/odysseus/venv/bin/activate
-msg_debug "Running setup.py with 60s timeout"
-SETUP_OUTPUT=$(timeout 60 python3 setup.py 2>&1 || true)
+SETUP_OUTPUT=$(echo -e "\n\n\n\n\n" | timeout 60 python3 setup.py 2>&1 || true)
 msg_debug "setup.py output: ${SETUP_OUTPUT}"
-ADMIN_PASS=$(echo "$SETUP_OUTPUT" | grep -oP '(?<=password:\s)\S+' || true)
-msg_debug "Captured admin password: ${ADMIN_PASS:-<none captured>}"
 deactivate
 msg_ok "Ran initial setup"
 
