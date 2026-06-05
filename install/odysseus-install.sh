@@ -51,11 +51,19 @@ deactivate
 msg_ok "Set up Python virtual environment"
 
 msg_info "Running initial setup"
-msg_debug "Running: python3 setup.py (creates dirs and db only — admin registered on first web login)"
+msg_debug "Running setup.py non-interactively via env vars"
 cd /opt/odysseus
 source /opt/odysseus/venv/bin/activate
-SETUP_OUTPUT=$(echo -e "\n\n\n\n\n" | timeout 60 python3 setup.py 2>&1 || true)
-msg_debug "setup.py output: ${SETUP_OUTPUT}"
+# Set env vars so setup.py skips all prompts and uses defaults
+SETUP_OUTPUT=$(ODYSSEUS_ADMIN_USER=admin timeout 60 python3 setup.py 2>&1 || true)
+msg_debug "setup.py full output: ${SETUP_OUTPUT}"
+# Extract password — it appears on a line after "Admin password:"
+ADMIN_PASS=$(echo "$SETUP_OUTPUT" | grep -A1 -i "admin password" | tail -1 | tr -d ' 	' || true)
+# Fallback: grab any standalone token that looks like a password (8+ chars, mixed case)
+if [[ -z "$ADMIN_PASS" ]]; then
+  ADMIN_PASS=$(echo "$SETUP_OUTPUT" | grep -i "password" | grep -oE "[A-Za-z0-9]{10,}" | tail -1 || true)
+fi
+msg_debug "Captured admin password: ${ADMIN_PASS:-<not captured>}"
 deactivate
 msg_ok "Ran initial setup"
 
@@ -102,8 +110,10 @@ if [[ -n "${ADMIN_PASS:-}" ]]; then
   echo "$ADMIN_PASS" >/root/.odysseus_admin_pass
   chmod 600 /root/.odysseus_admin_pass
   msg_debug "Admin password saved to /root/.odysseus_admin_pass"
+  msg_ok "Admin credentials: username=admin  password=${ADMIN_PASS}"
 else
-  msg_warn "No admin password captured — setup.py output may have different format"
+  msg_warn "Could not capture admin password — check setup.py output above"
+  msg_warn "You can rerun setup manually: cd /opt/odysseus && source venv/bin/activate && python3 setup.py"
 fi
 
 motd_ssh

@@ -87,4 +87,11 @@ else
   echo -e "${TAB}${YW}Could not resolve IP. Check container with: pct exec ${CTID} -- hostname -I${CL}\n"
 fi
 
-echo -e "${TAB}${DIM}Register your admin account on first visit.${CL}\n"
+if pct exec "$CTID" -- test -f /root/.odysseus_admin_pass 2>/dev/null; then
+  PASS=$(pct exec "$CTID" -- cat /root/.odysseus_admin_pass)
+  echo -e "${TAB}${BOLD}Username:${CL} ${YW}admin${CL}"
+  echo -e "${TAB}${BOLD}Password:${CL} ${YW}${PASS}${CL}"
+  echo -e "${TAB}${DIM}Change it in Settings after first login.${CL}\n"
+else
+  echo -e "${TAB}${YW}Could not retrieve password. Check inside container: cat /root/.odysseus_admin_pass${CL}\n"
+fi
