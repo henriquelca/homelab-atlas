@@ -41,10 +41,12 @@ msg_debug "Creating venv at /opt/odysseus/venv"
 python3 -m venv /opt/odysseus/venv
 source /opt/odysseus/venv/bin/activate
 msg_debug "venv activated — pip version: $(pip --version)"
-pip install --upgrade pip -q
-pip install uvicorn -q
+pip install --upgrade pip
+pip install uvicorn
 msg_debug "Installing requirements from /opt/odysseus/requirements.txt"
-pip install -r /opt/odysseus/requirements.txt -q
+pip install -r /opt/odysseus/requirements.txt
+msg_debug "Installing bcrypt explicitly"
+pip install bcrypt
 deactivate
 msg_ok "Set up Python virtual environment"
 
@@ -52,7 +54,8 @@ msg_info "Running initial setup"
 msg_debug "Running: python3 setup.py"
 cd /opt/odysseus
 source /opt/odysseus/venv/bin/activate
-SETUP_OUTPUT=$(python3 setup.py 2>&1 || true)
+msg_debug "Running setup.py with 60s timeout"
+SETUP_OUTPUT=$(timeout 60 python3 setup.py 2>&1 || true)
 msg_debug "setup.py output: ${SETUP_OUTPUT}"
 ADMIN_PASS=$(echo "$SETUP_OUTPUT" | grep -oP '(?<=password:\s)\S+' || true)
 msg_debug "Captured admin password: ${ADMIN_PASS:-<none captured>}"
