@@ -12,42 +12,59 @@
 REPO_RAW="https://raw.githubusercontent.com/henriquelca/homelab-atlas/main"
 
 # ─── Colors ───────────────────────────────────────────────────────────────────
-YW="\e[33m"; GN="\e[32m"; RD="\e[31m"; BL="\e[36m"; CL="\e[0m"; BOLD="\e[1m"
+YW="\e[33m"; GN="\e[32m"; RD="\e[31m"; BL="\e[36m"; CL="\e[0m"; BOLD="\e[1m"; DIM="\e[2m"
 TAB="  "
 
 msg_info()  { echo -e "${TAB}${BL}[INFO]${CL}  $1"; }
 msg_ok()    { echo -e "${TAB}${GN}[OK]${CL}    $1"; }
 msg_error() { echo -e "${TAB}${RD}[ERROR]${CL} $1"; exit 1; }
 msg_warn()  { echo -e "${TAB}${YW}[WARN]${CL}  $1"; }
+msg_debug() { echo -e "${TAB}${DIM}[DEBUG]${CL} $1"; }
 
-catch_errors() { set -Eeuo pipefail; trap 'echo -e "${RD}Error on line $LINENO${CL}"; exit 1' ERR; }
+catch_errors() {
+  set -Eeuo pipefail
+  trap 'msg_error "Unexpected error on line $LINENO — check output above"' ERR
+  msg_debug "catch_errors() set — pipefail and ERR trap active"
+}
 
 # ─── Network check ────────────────────────────────────────────────────────────
 setting_up_container() {
-  msg_info "Checking network"
+  msg_info "Checking network connectivity"
+  msg_debug "Waiting up to 10s for an IP address"
   for ((i = 10; i > 0; i--)); do
     [[ "$(hostname -I)" != "" ]] && break
+    msg_debug "No IP yet — retrying (${i}s left)"
     sleep 1
   done
   if [[ "$(hostname -I)" == "" ]]; then
     msg_error "No network after 10 tries — check container network settings."
   fi
+  msg_debug "IP acquired: $(hostname -I | awk '{print $1}')"
+
+  msg_debug "Removing EXTERNALLY-MANAGED markers"
   rm -rf /usr/lib/python3.*/EXTERNALLY-MANAGED
+
+  msg_debug "Disabling systemd-networkd-wait-online"
   systemctl disable -q --now systemd-networkd-wait-online.service 2>/dev/null || true
+
   msg_ok "Network connected: $(hostname -I | awk '{print $1}')"
 }
 
 # ─── OS update ────────────────────────────────────────────────────────────────
 update_os() {
   msg_info "Updating container OS"
+  msg_debug "Running: apt-get update"
   apt-get update -qq
+  msg_debug "Running: apt-get dist-upgrade"
   apt-get -y -qq dist-upgrade
+  msg_debug "Removing EXTERNALLY-MANAGED markers post-upgrade"
   rm -rf /usr/lib/python3.*/EXTERNALLY-MANAGED
   msg_ok "Updated container OS"
 }
 
 # ─── MOTD & SSH ───────────────────────────────────────────────────────────────
 motd_ssh() {
+  msg_debug "motd_ssh() — writing /etc/profile.d/00_lxc-details.sh"
   local PROFILE_FILE="/etc/profile.d/00_lxc-details.sh"
   cat > "$PROFILE_FILE" << EOF
 #!/usr/bin/env bash
@@ -59,15 +76,17 @@ echo -e "  \e[33mIP:\e[0m      \e[32m\$(hostname -I | awk '{print \$1}')\e[0m"
 echo ""
 EOF
   chmod -x /etc/update-motd.d/* 2>/dev/null || true
+  msg_debug "motd_ssh() — done"
 }
 
 # ─── Customize (autologin + update command) ───────────────────────────────────
-# Mirrors community-scripts customize() exactly — just points to your repo.
 customize() {
-  # Autologin if no password set
+  msg_debug "customize() called — PASSWORD='${PASSWORD:-<not set>}'"
+
   if [[ "${PASSWORD:-}" == "" ]]; then
     msg_info "Setting up autologin"
     local GETTY_OVERRIDE="/etc/systemd/system/container-getty@1.service.d/override.conf"
+    msg_debug "Writing autologin override to ${GETTY_OVERRIDE}"
     mkdir -p "$(dirname "$GETTY_OVERRIDE")"
     cat > "$GETTY_OVERRIDE" << EOF
 [Service]
@@ -75,11 +94,13 @@ ExecStart=
 ExecStart=-/sbin/agetty --autologin root --noclear --keep-baud tty%I 115200,38400,9600 \$TERM
 EOF
     systemctl daemon-reload
+    msg_debug "Autologin override applied"
     msg_ok "Autologin configured"
   fi
 
-  # Update command — re-runs the ct script exactly like community-scripts does
-  echo "bash -c \"\$(curl -fsSL ${REPO_RAW}/ct/${app}.sh)\"" > /usr/bin/update
+  local update_cmd="bash -c \"\$(curl -fsSL ${REPO_RAW}/ct/${app}.sh)\""
+  msg_debug "Writing update command to /usr/bin/update: ${update_cmd}"
+  echo "$update_cmd" > /usr/bin/update
   chmod +x /usr/bin/update
   msg_ok "Update command created — type 'update' to update ${app}"
 }

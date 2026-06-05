@@ -1,54 +1,80 @@
 #!/usr/bin/env bash
-source <(curl -fsSL https://raw.githubusercontent.com/henriquelca/homelab-atlas/main/misc/install.func)
 # Copyright (c) 2026 henriquelca
 # Author: henriquelca
 # License: MIT
 # Source: https://github.com/pewdiepie-archdaemon/odysseus
 
+# ─── Bootstrap ────────────────────────────────────────────────────────────────
+# Must run before sourcing install.func since curl may not exist yet
+echo "  [DEBUG] Starting bootstrap — updating apt and installing curl"
+apt-get update -qq
+apt-get install -y -qq curl
+echo "  [DEBUG] Bootstrap complete — curl installed"
+
+source <(curl -fsSL https://raw.githubusercontent.com/henriquelca/homelab-atlas/main/misc/install.func)
+
+# ─── Setup ────────────────────────────────────────────────────────────────────
 app="odysseus"
 catch_errors
 setting_up_container
 update_os
 
+msg_debug "Starting Odysseus install — app=${app}"
+
 msg_info "Installing system dependencies"
+msg_debug "Running apt-get install for: git tmux python3 python3-pip python3-venv build-essential libssl-dev libffi-dev"
 apt-get install -y -qq \
-  git curl tmux \
+  git tmux \
   python3 python3-pip python3-venv \
   build-essential libssl-dev libffi-dev
 msg_ok "Installed system dependencies"
 
 msg_info "Cloning Odysseus repository"
-if [[ -d /opt/odysseus ]]; then
-  msg_error "Odysseus already appears to be installed."
-  exit 1
-fi
+msg_debug "Running: git clone https://github.com/pewdiepie-archdaemon/odysseus /opt/odysseus"
+rm -rf /opt/odysseus
 git clone -q https://github.com/pewdiepie-archdaemon/odysseus /opt/odysseus
+msg_debug "Clone complete — files: $(ls /opt/odysseus)"
 msg_ok "Cloned Odysseus repository"
 
 msg_info "Setting up Python virtual environment"
+msg_debug "Creating venv at /opt/odysseus/venv"
 python3 -m venv /opt/odysseus/venv
 source /opt/odysseus/venv/bin/activate
+msg_debug "venv activated — pip version: $(pip --version)"
 pip install --upgrade pip -q
 pip install uvicorn -q
+msg_debug "Installing requirements from /opt/odysseus/requirements.txt"
 pip install -r /opt/odysseus/requirements.txt -q
 deactivate
 msg_ok "Set up Python virtual environment"
 
 msg_info "Running initial setup"
+msg_debug "Running: python3 setup.py"
 cd /opt/odysseus
 source /opt/odysseus/venv/bin/activate
 SETUP_OUTPUT=$(python3 setup.py 2>&1 || true)
+msg_debug "setup.py output: ${SETUP_OUTPUT}"
 ADMIN_PASS=$(echo "$SETUP_OUTPUT" | grep -oP '(?<=password:\s)\S+' || true)
+msg_debug "Captured admin password: ${ADMIN_PASS:-<none captured>}"
 deactivate
 msg_ok "Ran initial setup"
 
 msg_info "Setting up environment file"
-if [[ ! -f /opt/odysseus/.env ]]; then
-  cp /opt/odysseus/.env.example /opt/odysseus/.env
+msg_debug "Checking for /opt/odysseus/.env.example"
+if [[ ! -f /opt/odysseus/.env.example ]]; then
+  msg_warn ".env.example not found — skipping env file copy"
+else
+  if [[ ! -f /opt/odysseus/.env ]]; then
+    cp /opt/odysseus/.env.example /opt/odysseus/.env
+    msg_debug "Copied .env.example to .env"
+  else
+    msg_debug ".env already exists — skipping copy"
+  fi
 fi
 msg_ok "Environment file ready"
 
 msg_info "Creating systemd service"
+msg_debug "Writing /etc/systemd/system/odysseus.service"
 cat <<EOF >/etc/systemd/system/odysseus.service
 [Unit]
 Description=Odysseus AI Workspace
@@ -67,15 +93,22 @@ User=root
 WantedBy=multi-user.target
 EOF
 systemctl daemon-reload
+msg_debug "Enabling and starting odysseus service"
 systemctl enable -q --now odysseus
+msg_debug "Service status: $(systemctl is-active odysseus)"
 msg_ok "Created and started systemd service"
 
 if [[ -n "${ADMIN_PASS:-}" ]]; then
   echo "$ADMIN_PASS" >/root/.odysseus_admin_pass
   chmod 600 /root/.odysseus_admin_pass
+  msg_debug "Admin password saved to /root/.odysseus_admin_pass"
+else
+  msg_warn "No admin password captured — setup.py output may have different format"
 fi
 
 motd_ssh
+msg_debug "motd_ssh complete"
 customize
+msg_debug "customize complete — update command installed at /usr/bin/update"
 
 msg_ok "Odysseus installation complete"
